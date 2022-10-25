@@ -497,7 +497,7 @@ class Ntsc:
             Q = fQ[y]
             sum: int = Y[0] + Y[1]
             y2 = numpy.pad(Y[2:], (0, 2))
-            yd4 = numpy.pad(Y[:-2], (2, 0))
+            yd4 = numpy.pad(Y[:-2], (2, 0))            
             sums = y2 - yd4
             sums0 = numpy.concatenate([numpy.array([sum], dtype=numpy.int32), sums])
             acc = numpy.add.accumulate(sums0, dtype=numpy.int32)[1:]
@@ -644,13 +644,16 @@ class Ntsc:
             self.chroma_into_luma(yiq, field, fieldno, self._subcarrier_amplitude)
             self.chroma_from_luma(yiq, field, fieldno, self._subcarrier_amplitude)
 
-    def composite_layer(self, dst: numpy.ndarray, src: numpy.ndarray, field: int, fieldno: int):
+    def composite_layer(self, dst: numpy.ndarray, src: numpy.ndarray, field: int, fieldno: int, moirepos: int):
         assert dst.shape == src.shape, "dst and src images must be of same shape"
+
+        self._video_scanline_phase_shift_offset = moirepos
 
         if self._black_line_cut:
             cut_black_line_border(src)
 
         yiq = bgr2yiq(src)
+
         if self._color_bleed_before and (self._color_bleed_vert != 0 or self._color_bleed_horiz != 0):
             self.color_bleed(yiq, field)
 

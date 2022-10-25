@@ -74,7 +74,13 @@ class Renderer(QtCore.QObject):
         logger.debug(f'Output video: {str(self.render_data["target_file"].resolve())}')
         #logger.debug(f'Process audio: {self.process_audio}')
 
+        moire_moving = [0,0,2,2]
+        for i in range(0,self.render_data["input_video"]["frames_count"]):
+            moire_moving += [0,0,2,2]
+        #print(moire_moving)
+
         frame_index = 0
+        moire_pos = moire_moving[frame_index]
         self.renderStateChanged.emit(True)
         cap = FileVideoStream(
             path=str(self.render_data["input_video"]["path"]),
@@ -89,6 +95,7 @@ class Renderer(QtCore.QObject):
                 continue
 
             frame_index += 1
+            moire_pos = moire_moving[frame_index]
             frame = cap.read()
             if frame is None or not self.running:
                 self.sendStatus.emit(f'Render stopped. ret(debug):')
@@ -103,7 +110,7 @@ class Renderer(QtCore.QObject):
                 frame = expand_to_4width(frame)
 
             if self.mainEffect:
-                frame = self.render_data["nt"].composite_layer(frame, frame, field=0, fieldno=1)
+                frame = self.render_data["nt"].composite_layer(frame, frame, field=0, fieldno=2, moirepos=moire_pos)
                 frame = cv2.convertScaleAbs(frame)
                 frame[1:-1:2] = frame[0:-2:2] / 2 + frame[2::2] / 2
 

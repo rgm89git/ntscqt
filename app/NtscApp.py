@@ -58,7 +58,6 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "_video_chroma_loss": self.tr("Video chroma loss"),
             "_video_noise": self.tr("Video noise"),
             "_video_scanline_phase_shift": self.tr("Video scanline phase shift"),
-            "_video_scanline_phase_shift_offset": self.tr("Video scanline phase shift offset"),
             "_head_switching_speed": self.tr("Head switch move speed"),
             "_vhs_head_switching": self.tr("Head switching"),
             "_color_bleed_before": self.tr("Color bleed before"),
@@ -89,7 +88,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.add_slider("_video_chroma_loss", 0, 800)
         self.add_slider("_video_noise", 0, 4200)
         self.add_slider("_video_scanline_phase_shift", 0, 270, pro=True)
-        self.add_slider("_video_scanline_phase_shift_offset", 0, 3, pro=True)
+        #self.add_slider("_video_scanline_phase_shift_offset", 0, 3, pro=True)
 
         self.add_slider("_head_switching_speed", 0, 100)
 

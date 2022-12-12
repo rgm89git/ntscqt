@@ -333,6 +333,7 @@ class Ntsc:
         self._output_vhs_tape_speed = VHSSpeed.VHS_SP
 
         self._black_line_cut = False  # Add black line glitch (credits to @rgm89git)
+        self._black_tape_line = False # Add black tape line under video
 
     def rand(self) -> numpy.int32:
         return self.random.nextInt(_from=0)
@@ -454,6 +455,33 @@ class Ntsc:
             tx = 0
             y += 2
             shy += 1
+
+    def add_black_tape_line(self, yiq: numpy.ndarray, field: int = 0, posx: int = None) -> None:
+        _, height, width = yiq.shape
+        fY, fI, fQ = yiq
+
+        if posx is None:
+            line_width = int(width * 0.65)  # 65%
+        else:
+            line_width = posx  # TODO: value to settings
+
+        x = 0
+        tx = line_width
+        twidth = width + width // 10
+        y = height-2
+
+        Y = fY[y]
+        I = fI[y]
+        Q = fQ[y]
+
+        tmp = numpy.zeros(twidth)
+
+        while x < width:
+            if(x > (width - line_width) and (field == 2)):
+                Y[x] = 0
+                I[x] = 0
+                Q[x] = 0
+            x += 1
 
     _Umult = numpy.array([1, 0, -1, 0], dtype=numpy.int32)
     _Vmult = numpy.array([0, 1, 0, -1], dtype=numpy.int32)
@@ -644,13 +672,16 @@ class Ntsc:
             self.chroma_into_luma(yiq, field, fieldno, self._subcarrier_amplitude)
             self.chroma_from_luma(yiq, field, fieldno, self._subcarrier_amplitude)
 
-    def composite_layer(self, dst: numpy.ndarray, src: numpy.ndarray, field: int, fieldno: int):
+    def composite_layer(self, dst: numpy.ndarray, src: numpy.ndarray, field: int, fieldno: int, moirepos: int):
         assert dst.shape == src.shape, "dst and src images must be of same shape"
+        
+        self._video_scanline_phase_shift_offset = moirepos
 
         if self._black_line_cut:
             cut_black_line_border(src)
 
         yiq = bgr2yiq(src)
+
         if self._color_bleed_before and (self._color_bleed_vert != 0 or self._color_bleed_horiz != 0):
             self.color_bleed(yiq, field)
 
@@ -670,6 +701,9 @@ class Ntsc:
 
         if self._vhs_head_switching:
             self.vhs_head_switching(yiq, field)
+        
+        if self._black_tape_line:
+            self.add_black_tape_line(yiq, field)
 
         if not self._nocolor_subcarrier:
             self.chroma_from_luma(yiq, field, fieldno, self._subcarrier_amplitude_back)

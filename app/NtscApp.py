@@ -44,6 +44,8 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.setupUi(self)  # Это нужно для инициализации нашего дизайна
         self.strings = {
             "_composite_preemphasis": self.tr("Composite preemphasis"),
+            "_subcarrier_amplitude": self.tr("Subcarrier amplitude"),
+            "_subcarrier_amplitude_back": self.tr("Subcarrier turnback amplitude"),
             "_vhs_out_sharpen": self.tr("VHS out sharpen"),
             "_vhs_edge_wave": self.tr("Edge wave"),
             "_output_vhs_tape_speed": self.tr("VHS tape speed"),
@@ -73,8 +75,11 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "_vhs_svideo_out": self.tr("VHS svideo out"),
             "_output_ntsc": self.tr("NTSC output"),
             "_black_line_cut": self.tr("Cut 2% black line"),
+            "_black_tape_line": self.tr("Black under tape line"),
         }
         self.add_slider("_composite_preemphasis", 0, 10, float)
+        self.add_slider("_subcarrier_amplitude", 0, 16384, pro=True)
+        self.add_slider("_subcarrier_amplitude_back", 0, 16384, pro=True)
         self.add_slider("_vhs_out_sharpen", 1, 5)
         self.add_slider("_vhs_edge_wave", 0, 10)
         # self.add_slider("_output_vhs_tape_speed", 0, 10)
@@ -97,15 +102,16 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.add_checkbox("_vhs_head_switching", (1, 1))
         self.add_checkbox("_color_bleed_before", (1, 2), pro=True)
         self.add_checkbox("_enable_ringing2", (2, 1), pro=True)
-        self.add_checkbox("_composite_in_chroma_lowpass", (2, 2), pro=True)
+        self.add_checkbox("_composite_in_chroma_lowpass", (3, 2), pro=True)
         self.add_checkbox("_composite_out_chroma_lowpass", (3, 1), pro=True)
-        self.add_checkbox("_composite_out_chroma_lowpass_lite", (3, 2), pro=True)
+        self.add_checkbox("_composite_out_chroma_lowpass_lite", (4, 2), pro=True)
         self.add_checkbox("_emulating_vhs", (4, 1))
-        self.add_checkbox("_nocolor_subcarrier", (4, 2), pro=True)
+        self.add_checkbox("_nocolor_subcarrier", (5, 2), pro=True)
         self.add_checkbox("_vhs_chroma_vert_blend", (5, 1), pro=True)
-        self.add_checkbox("_vhs_svideo_out", (5, 2), pro=True)
+        self.add_checkbox("_vhs_svideo_out", (6, 2), pro=True)
         self.add_checkbox("_output_ntsc", (6, 1), pro=True)
         self.add_checkbox("_black_line_cut", (1, 2), pro=False)
+        self.add_checkbox("_black_tape_line", (2, 2), pro=True)
 
         self.renderHeightBox.valueChanged.connect(
             lambda: self.set_current_frame(self.current_frame,self.next_frame)
@@ -608,9 +614,10 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.thread.start()
 
     def nt_process(self, frame1: ndarray, frame2: ndarray) -> ndarray:
-        f1 = self.nt.composite_layer(frame1, frame1, field=0, fieldno=2)
+        video_scanline_phase_shift_offset = self.nt._video_scanline_phase_shift_offset
+        f1 = self.nt.composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=video_scanline_phase_shift_offset)
         f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
-        f2 = self.nt.composite_layer(f2_in, f2_in, field=2, fieldno=2)
+        f2 = self.nt.composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=video_scanline_phase_shift_offset)
         f1_out = cv2.convertScaleAbs(f1)
         f2_out = cv2.convertScaleAbs(f2)
 

@@ -84,12 +84,27 @@ class Renderer(QtCore.QObject):
         #)
         cap = self.render_data["input_video"]["cap"]
 
+        #print(int(self.render_data["input_video"]["frames_count"] / 2))
+
+        moirepos = 0
+
         while (frame_index <= self.render_data["input_video"]["frames_count"]-2):
+            
+            if((og_frame_index+1) % 2 == 0):
+                moirepos = 2
+            else:
+                moirepos = 0
 
             if self.pause:
                 self.sendStatus.emit(f"{status_string} [P]")
                 time.sleep(0.3)
                 continue
+
+            #frame_index += 1
+            #frame = cap.read()
+
+            logger.debug(f'TOP FIELD: {frame_index}')
+            logger.debug(f'BOTTOM FIELD: {frame_index+1}')
 
             cap.set(1, frame_index)
             ret1, frame1 = cap.read()
@@ -120,9 +135,9 @@ class Renderer(QtCore.QObject):
                 #frame = cv2.convertScaleAbs(frame)
                 #frame[1:-1:2] = frame[0:-2:2] / 2 + frame[2::2] / 2
 
-                f1 = self.render_data["nt"].composite_layer(frame1, frame1, field=0, fieldno=2)
+                f1 = self.render_data["nt"].composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=moirepos)
                 f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
-                f2 = self.render_data["nt"].composite_layer(f2_in, f2_in, field=2, fieldno=2)
+                f2 = self.render_data["nt"].composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=moirepos)
                 f1_out = cv2.convertScaleAbs(f1)
                 f2_out = cv2.convertScaleAbs(f2)
 
@@ -143,6 +158,10 @@ class Renderer(QtCore.QObject):
             self.sendStatus.emit(status_string)
             video.write(frame)
 
+            #if((og_frame_index+1) % 2 == 1):
+            #    frame_index += 2
+            #else:
+            #    frame_index += 1
             frame_index += 2
             og_frame_index += 1
 

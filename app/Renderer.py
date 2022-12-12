@@ -88,7 +88,12 @@ class Renderer(QtCore.QObject):
 
         moirepos = 0
 
-        while (frame_index <= self.render_data["input_video"]["frames_count"]-2):
+        if(self.input_video["frames_count"] % 2 == 1):
+            new_frame_count = self.render_data["input_video"]["frames_count"]-3
+        else:
+            new_frame_count = self.render_data["input_video"]["frames_count"]-2
+
+        while (frame_index <= new_frame_count):
             
             if((og_frame_index+1) % 2 == 0):
                 moirepos = 2

@@ -21,6 +21,7 @@ from ui.DoubleSlider import DoubleSlider
 class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
     def __init__(self):
         self.current_frame: numpy.ndarray = False
+        self.next_frame: numpy.ndarray = False
         self.preview: numpy.ndarray = False
         self.scale_pixmap = False
         self.input_video = {}
@@ -107,7 +108,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.add_checkbox("_black_line_cut", (1, 2), pro=False)
 
         self.renderHeightBox.valueChanged.connect(
-            lambda: self.set_current_frame(self.current_frame)
+            lambda: self.set_current_frame(self.current_frame,self.next_frame)
         )
         self.openFile.clicked.connect(self.open_file)
         self.renderVideoButton.clicked.connect(self.render_video)
@@ -391,32 +392,66 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.nt_controls[param_name] = slider
         self.slidersLayout.addWidget(slider_frame)
 
+    def set_frames(self, cap, frame_no, interlaced: bool):
+        cap.set(1, frame_no)
+        ret1, frame1 = cap.read()
+
+        if(interlaced):
+            if((frame_no == self.input_video["frames_count"]-2) or (frame_no+1 == self.input_video["frames_count"]-2)):
+                frame2 = frame1
+            else:
+                cap.set(1, frame_no+1)
+                ret2, frame2 = cap.read()
+                cap.set(1, frame_no)
+        else:
+            frame2 = frame1
+        
+        return frame1, frame2
+    
     def get_current_video_frame(self):
         preview_h = self.renderHeightBox.value()
         if not self.input_video or preview_h < 10:
             return None
         frame_no = self.videoTrackSlider.value()
-        self.input_video["cap"].set(1, frame_no)
-        ret, frame = self.input_video["cap"].read()
-        return frame
 
-    def set_current_frame(self, frame):
-        current_frame_valid = isinstance(frame, ndarray)
+        #self.input_video["cap"].set(1, frame_no)
+        #ret1, frame1 = self.input_video["cap"].read()
+
+        #if(frame_no == self.input_video["frames_count"]):
+        #    frame2 = frame1
+        #else:
+        #    self.input_video["cap"].set(1, frame_no+1)
+        #    ret2, frame2 = self.input_video["cap"].read()
+        #    self.input_video["cap"].set(1, frame_no)
+        
+        #return frame1, frame2
+
+        return self.set_frames(cap=self.input_video["cap"],frame_no=frame_no,interlaced=True)
+
+    def set_current_frame(self, frame1, frame2):
+        #current_frame_valid = isinstance(frame1, ndarray)
+        current_frame_valid = True
+
         preview_h = self.renderHeightBox.value()
         if not current_frame_valid or preview_h < 10:
             self.update_status("Trying to set invalid current frame")
             return None
 
-        self.current_frame = frame
+        self.current_frame = frame1
+        self.next_frame = frame2
+
         try:
             crop_wh = resize_to_height(self.orig_wh, preview_h)
-            self.preview = cv2.resize(frame, crop_wh)
+            self.preview1 = cv2.resize(frame1, crop_wh)
+            self.preview2 = cv2.resize(frame2, crop_wh)
         except ZeroDivisionError:
             self.update_status("ZeroDivisionError :DDDDDD")
             pass
 
-        if self.preview.shape[1] % 4 != 0:
-            self.preview = trim_to_4width(self.preview)
+        if self.preview1.shape[1] % 4 != 0:
+            self.preview1 = trim_to_4width(self.preview1)
+        if self.preview2.shape[1] % 4 != 0:
+            self.preview2 = trim_to_4width(self.preview2)
 
         self.nt_update_preview()
 
@@ -466,7 +501,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.livePreviewCheckbox.hide()
         self.renderVideoButton.hide()
 
-    def set_render_heigth(self, height):
+    def set_render_height(self, height):
         if height > 600:
             self.renderHeightBox.setValue(600)
             self.update_status(
@@ -478,9 +513,9 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         height, width, channels = img.shape
         self.orig_wh = width, height
 
-        self.set_render_heigth(height)
+        self.set_render_height(height)
 
-        self.set_current_frame(img)
+        self.set_current_frame(img,img)
 
     def nt_get_config(self):
         values = {}
@@ -514,16 +549,24 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "path": path,
             "suffix": path.suffix.lower(),
         }
+
+        if(self.input_video["frames_count"] % 2 == 1):
+            new_frame_count = self.input_video["frames_count"]-1
+        else:
+            new_frame_count = self.input_video["frames_count"]
+
         logger.debug(f"selfinput: {self.input_video}")
         self.orig_wh = (int(self.input_video["width"]), int(self.input_video["height"]))
-        self.set_render_heigth(self.input_video["height"])
-        self.set_current_frame(self.get_current_video_frame())
+        self.set_render_height(self.input_video["height"])
+        self.set_current_frame(self.get_current_video_frame()[0],self.get_current_video_frame()[1])
         self.videoTrackSlider.setMinimum(1)
-        self.videoTrackSlider.setMaximum(self.input_video["frames_count"])
+        self.videoTrackSlider.setMaximum(new_frame_count)
+        self.videoTrackSlider.setSingleStep(2)
+        print(str(self.videoTrackSlider.singleStep()))
         self.videoTrackSlider.valueChanged.connect(
-            lambda: self.set_current_frame(self.get_current_video_frame())
+            lambda: self.set_current_frame(self.get_current_video_frame()[0],self.get_current_video_frame()[1])
         )
-        self.progressBar.setMaximum(self.input_video["frames_count"])
+        self.progressBar.setMaximum(self.input_video["frames_count"] // 2)
 
     def render_image(self):
         target_file = pick_save_file(self, title='Save frame as', suffix='.png')
@@ -534,7 +577,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         image = cv2.resize(self.current_frame, crop_wh)
         if image.shape[1] % 4 != 0:
             image = trim_to_4width(image)
-        image = self.nt_process(image)
+        image = self.nt_process(image,image)
         is_success, im_buf_arr = cv2.imencode(".png", image)
         if not is_success:
             self.update_status("Error while saving (!is_success)")
@@ -564,10 +607,16 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.videoRenderer.render_data = render_data
         self.thread.start()
 
-    def nt_process(self, frame) -> ndarray:
-        _ = self.nt.composite_layer(frame, frame, field=0, fieldno=1)
-        ntsc_out_image = cv2.convertScaleAbs(_)
-        ntsc_out_image[1:-1:2] = ntsc_out_image[0:-2:2] / 2 + ntsc_out_image[2::2] / 2
+    def nt_process(self, frame1: ndarray, frame2: ndarray) -> ndarray:
+        f1 = self.nt.composite_layer(frame1, frame1, field=0, fieldno=2)
+        f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
+        f2 = self.nt.composite_layer(f2_in, f2_in, field=2, fieldno=2)
+        f1_out = cv2.convertScaleAbs(f1)
+        f2_out = cv2.convertScaleAbs(f2)
+
+        ntsc_out_image = f1_out
+        #ntsc_out_image[1:-1:2] = ntsc_out_image[0:-2:2] / 2 + f2_out[2::2] / 2
+        ntsc_out_image[1::2] = f2_out[2::2]
         return ntsc_out_image
 
     def nt_update_preview(self):
@@ -577,14 +626,14 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             return None
 
         if not self.mainEffect:
-            self.render_preview(self.preview)
+            self.render_preview(self.preview1)
             return None
 
-        ntsc_out_image = self.nt_process(self.preview)
+        ntsc_out_image = self.nt_process(self.preview1,self.preview2)
 
         if self.compareMode:
             ntsc_out_image = numpy.concatenate(
-                (self.preview[:self.preview.shape[0] // 2], ntsc_out_image[ntsc_out_image.shape[0] // 2:])
+                (self.preview1[:self.preview1.shape[0] // 2], ntsc_out_image[ntsc_out_image.shape[0] // 2:])
             )
 
         self.render_preview(ntsc_out_image)

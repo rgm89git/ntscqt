@@ -30,6 +30,17 @@ class Renderer(QtCore.QObject):
     audio_lowpass = 10896
     audio_noise_volume = 0.03
 
+    def get_frame_interlacing(self, cap, frame_no, interlaced: bool = True):
+        cap.set(1, frame_no)
+        ret1, frame1 = cap.read()
+        cap.set(1, frame_no+1)
+        ret2, frame2 = cap.read()
+
+        if((not interlaced) or (ret2 == False)):
+            frame2 = frame1
+        
+        return frame1, frame2
+
     def run(self):
         self.running = True
 
@@ -88,12 +99,19 @@ class Renderer(QtCore.QObject):
 
         moirepos = 0
 
-        if(self.render_data["input_video"]["frames_count"] % 2 == 1):
-            new_frame_count = self.render_data["input_video"]["frames_count"]-3
-        else:
-            new_frame_count = self.render_data["input_video"]["frames_count"]-2
+        #if(self.render_data["input_video"]["frames_count"] % 2 == 1):
+        #    new_frame_count = self.render_data["input_video"]["frames_count"]-3
+        #else:
+        #    new_frame_count = self.render_data["input_video"]["frames_count"]-2
+        new_frame_count = self.render_data["new_framecount"]
 
-        while (frame_index <= new_frame_count):
+        cap.set(1, frame_index)
+        checkframe1, ogframe1 = cap.read()
+        cap.set(1, frame_index+1)
+        checkframe2, ogframe2 = cap.read()
+        cap.set(1, frame_index)
+
+        while (checkframe1 != False):
             
             if((og_frame_index+1) % 2 == 0):
                 moirepos = 2
@@ -108,18 +126,11 @@ class Renderer(QtCore.QObject):
             #frame_index += 1
             #frame = cap.read()
 
+            logger.debug(f'Is frame divisible by 1: {str((og_frame_index+1) % 2 == 0)}')
             logger.debug(f'TOP FIELD: {frame_index}')
             logger.debug(f'BOTTOM FIELD: {frame_index+1}')
 
-            cap.set(1, frame_index)
-            ret1, frame1 = cap.read()
-
-            if((frame_index == self.render_data["input_video"]["frames_count"]-2) or (frame_index+1 == self.render_data["input_video"]["frames_count"]-2)):
-                frame2 = frame1
-            else:
-                cap.set(1, frame_index+1)
-                ret2, frame2 = cap.read()
-                cap.set(1, frame_index)
+            frame1, frame2 = self.get_frame_interlacing(cap,frame_index,interlaced=True)
 
             if frame1 is None or not self.running:
                 self.sendStatus.emit(f'Render stopped. ret(debug):')
@@ -140,15 +151,17 @@ class Renderer(QtCore.QObject):
                 #frame = cv2.convertScaleAbs(frame)
                 #frame[1:-1:2] = frame[0:-2:2] / 2 + frame[2::2] / 2
 
-                f1 = self.render_data["nt"].composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=moirepos)
-                f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
-                f2 = self.render_data["nt"].composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=moirepos)
-                f1_out = cv2.convertScaleAbs(f1)
-                f2_out = cv2.convertScaleAbs(f2)
+                #f1 = self.render_data["nt"].composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=moirepos)
+                #f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
+                #f2 = self.render_data["nt"].composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=moirepos)
+                #f1_out = cv2.convertScaleAbs(f1)
+                #f2_out = cv2.convertScaleAbs(f2)
 
-                frame = f1_out
+                final = self.render_data["nt"].render_frame(frame1,frame2,2,moirepos)
+
+                frame = final[0]
                 #ntsc_out_image[1:-1:2] = ntsc_out_image[0:-2:2] / 2 + ntsc_out_image[2::2] / 2
-                frame[1::2,:] = f2_out[2::2,:]
+                frame[1::2,:] = final[1][2::2,:]
 
             frame = frame[:, 0:render_wh[0]]
 
@@ -172,6 +185,12 @@ class Renderer(QtCore.QObject):
 
             if((frame_index > self.render_data["input_video"]["frames_count"]) or (frame_index+1 > self.render_data["input_video"]["frames_count"])):
                 frame_index = self.render_data["input_video"]["frames_count"]
+            
+            cap.set(1, frame_index)
+            checkframe1, ogframe1 = cap.read()
+            cap.set(1, frame_index+1)
+            checkframe2, ogframe2 = cap.read()
+            cap.set(1, frame_index)
 
         video.release()
 

@@ -1,5 +1,7 @@
 import os
 import sys
+import traceback
+
 from pathlib import Path
 
 from PyQt5 import QtCore, QtWidgets
@@ -17,7 +19,8 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = QLibraryInfo.location(
 
 def crash_handler(type, value, tb):
     logger.trace(value)
-    logger.exception("Uncaught exception: {0}".format(str(value)))
+    #logger.exception("Uncaught exception: {0} - {1}".format(str(value),traceback.linecache.getline(traceback.extract_tb(sys.last_traceback)[0].filename, tb.tb_lineno)))
+    logger.exception(tb.msg)
     sys.exit(1)
 
 

@@ -25,6 +25,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.preview: numpy.ndarray = False
         self.scale_pixmap = False
         self.input_video = {}
+        self.framecount: int = 0
         self.templates = {}
         self.orig_wh: Tuple[int, int] = (0, 0)
         self.compareMode: bool = False
@@ -76,6 +77,8 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "_output_ntsc": self.tr("NTSC output"),
             "_black_line_cut": self.tr("Cut 2% black line"),
             "_black_tape_line": self.tr("Black under tape line"),
+            "_line_error": self.tr("Line error"),
+            "_line_error_range": self.tr("Line error range"),
         }
         self.add_slider("_composite_preemphasis", 0, 10, float)
         self.add_slider("_subcarrier_amplitude", 0, 16384, pro=True)
@@ -93,6 +96,8 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         self.add_slider("_video_chroma_noise", 0, 16384)
         self.add_slider("_video_chroma_phase_noise", 0, 50)
         self.add_slider("_video_chroma_loss", 0, 800)
+        self.add_slider("_line_error", 0, 800, pro=True)
+        self.add_slider("_line_error_range", 0, 10, pro=True)
         self.add_slider("_video_noise", 0, 4200)
         self.add_slider("_video_scanline_phase_shift", 0, 270, pro=True)
         self.add_slider("_video_scanline_phase_shift_offset", 0, 3, pro=True)
@@ -403,7 +408,7 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         ret1, frame1 = cap.read()
 
         if(interlaced):
-            if((frame_no == self.input_video["frames_count"]-2) or (frame_no+1 == self.input_video["frames_count"]-2)):
+            if((frame_no == self.framecount) or (frame_no+1 >= self.framecount)):
                 frame2 = frame1
             else:
                 cap.set(1, frame_no+1)
@@ -413,6 +418,40 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             frame2 = frame1
         
         return frame1, frame2
+    
+    def set_new_framecount(self, cap, old_framecount: int):
+        new_framecount = old_framecount
+
+        cap.set(1, new_framecount)
+        checkframe1, ogframe1 = cap.read()
+        cap.set(1, new_framecount+1)
+        checkframe2, ogframe2 = cap.read()
+        cap.set(1, new_framecount)
+
+        checker = checkframe1
+
+        if(old_framecount % 2 == 1):
+            amount = 1
+            checker = checkframe2
+        else:
+            amount = 2
+            checker = checkframe1
+
+        while (checker != True):
+            new_framecount -= amount
+
+            cap.set(1, new_framecount)
+            checkframe1, ogframe1 = cap.read()
+            cap.set(1, new_framecount+1)
+            checkframe2, ogframe2 = cap.read()
+            cap.set(1, new_framecount)
+
+            if(old_framecount % 2 == 1):
+                checker = checkframe2
+            else:
+                checker = checkframe1
+
+        return new_framecount
     
     def get_current_video_frame(self):
         preview_h = self.renderHeightBox.value()
@@ -431,6 +470,8 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
         #    self.input_video["cap"].set(1, frame_no)
         
         #return frame1, frame2
+
+        self.update_status(f'Frames: {str(frame_no // 2)}/{str(self.framecount // 2)}')
 
         return self.set_frames(cap=self.input_video["cap"],frame_no=frame_no,interlaced=True)
 
@@ -556,23 +597,29 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "suffix": path.suffix.lower(),
         }
 
-        if(self.input_video["frames_count"] % 2 == 1):
-            new_frame_count = self.input_video["frames_count"]-3
-        else:
-            new_frame_count = self.input_video["frames_count"]
+        #if(self.input_video["frames_count"] % 2 == 1):
+        #    new_frame_count = self.input_video["frames_count"]-3
+        #else:
+        #    new_frame_count = self.input_video["frames_count"]
 
-        logger.debug(f"selfinput: {self.input_video}")
+        logger.debug(f"Checking framecount...")
+        self.framecount = self.set_new_framecount(self.input_video["cap"],self.input_video["frames_count"])
+
+        #logger.debug(f"selfinput: {self.input_video}")
+        logger.debug(f'LOADED!\nPath: {str(self.input_video["path"])}\nOriginal FPS: {str("%.2f" % self.input_video["orig_fps"])}\nFramecount (after analysis): {str(self.framecount)}\nWidth: {str(self.input_video["width"])}\nHeight: {str(self.input_video["height"])}')
         self.orig_wh = (int(self.input_video["width"]), int(self.input_video["height"]))
         self.set_render_height(self.input_video["height"])
         self.set_current_frame(self.get_current_video_frame()[0],self.get_current_video_frame()[1])
         self.videoTrackSlider.setMinimum(1)
-        self.videoTrackSlider.setMaximum(new_frame_count)
+        self.videoTrackSlider.setMaximum(self.framecount)
         self.videoTrackSlider.setSingleStep(2)
-        print(str(self.videoTrackSlider.singleStep()))
+        #print(str(self.videoTrackSlider.singleStep()))
         self.videoTrackSlider.valueChanged.connect(
             lambda: self.set_current_frame(self.get_current_video_frame()[0],self.get_current_video_frame()[1])
         )
-        self.progressBar.setMaximum(self.input_video["frames_count"] // 2)
+        self.progressBar.setMaximum(self.framecount // 2)
+        self.update_status(f'Frames: {str(0)}/{str(self.framecount // 2)}')
+        print(self.nt._output_ntsc)
 
     def render_image(self):
         target_file = pick_save_file(self, title='Save frame as', suffix='.png')
@@ -604,6 +651,8 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
             "input_video": self.input_video,
             "input_heigth": self.renderHeightBox.value(),
             "upscale_2x": self.NearestUpScale.isChecked(),
+            "new_framecount": self.framecount,
+            "ntsc": self.nt._output_ntsc
         }
         self.setup_renderer()
         self.toggle_main_effect()
@@ -615,16 +664,19 @@ class NtscApp(QtWidgets.QMainWindow, mainWindow.Ui_MainWindow):
 
     def nt_process(self, frame1: ndarray, frame2: ndarray) -> ndarray:
         video_scanline_phase_shift_offset = self.nt._video_scanline_phase_shift_offset
-        f1 = self.nt.composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=video_scanline_phase_shift_offset)
-        f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
-        f2 = self.nt.composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=video_scanline_phase_shift_offset)
-        f1_out = cv2.convertScaleAbs(f1)
-        f2_out = cv2.convertScaleAbs(f2)
+        #f1 = self.nt.composite_layer(frame1, frame1, field=0, fieldno=2, moirepos=video_scanline_phase_shift_offset)
+        #f2_in = cv2.warpAffine(frame2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (frame2.shape[1], frame2.shape[0]+2))
+        #f2 = self.nt.composite_layer(f2_in, f2_in, field=2, fieldno=2, moirepos=video_scanline_phase_shift_offset)
+        #f1_out = cv2.convertScaleAbs(f1)
+        #f2_out = cv2.convertScaleAbs(f2)
+
+        f1_out, f2_out = self.nt.render_frame(frame1,frame2,2,video_scanline_phase_shift_offset)
 
         ntsc_out_image = f1_out
         #ntsc_out_image[1:-1:2] = ntsc_out_image[0:-2:2] / 2 + f2_out[2::2] / 2
         ntsc_out_image[1::2] = f2_out[2::2]
-        return ntsc_out_image
+        return f1_out
+        #return ntsc_out_image
 
     def nt_update_preview(self):
         current_frame_valid = isinstance(self.current_frame, ndarray)

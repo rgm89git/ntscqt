@@ -13,6 +13,13 @@ from scipy.ndimage.interpolation import shift
 import numpy as np
 import cv2
 
+from dataclasses import dataclass
+
+# from app.utils import composite_1d_bandpass
+
+#import matplotlib.pyplot as plt
+#import soundfile as sf
+
 M_PI = math.pi
 
 Int_MIN_VALUE = -2147483648
@@ -155,10 +162,10 @@ class XorWowRandom:
 def bgr2yiq(bgrimg: numpy.ndarray) -> numpy.ndarray:
     planar = numpy.transpose(bgrimg, (2, 0, 1))
     b, g, r = planar
-    dY = 0.30 * r + 0.59 * g + 0.11 * b
+    dY = 0.299 * r + 0.587 * g + 0.114 * b
 
     Y = (dY * 256).astype(numpy.int32)
-    I = (256 * (-0.27 * (b - dY) + 0.74 * (r - dY))).astype(numpy.int32)
+    I = (256 * (-0.275 * (b - dY) + 0.74 * (r - dY))).astype(numpy.int32)
     Q = (256 * (0.41 * (b - dY) + 0.48 * (r - dY))).astype(numpy.int32)
     return numpy.stack([Y, I, Q], axis=0).astype(numpy.int32)
 
@@ -244,7 +251,6 @@ def composite_lowpass(yiq: numpy.ndarray, field: int, fieldno: int):
             f = lp[2].lowpass_array(f)
             P[i, 0:width - delay] = f.astype(numpy.int32)[delay:]
 
-
 # lighter-weight filtering, probably what your old CRT does to reduce color fringes a bit
 def composite_lowpass_tv(yiq: numpy.ndarray, field: int, fieldno: int):
     _, height, width = yiq.shape
@@ -285,6 +291,8 @@ class VHSSpeed(Enum):
 class Ntsc:
     # https://en.wikipedia.org/wiki/NTSC
     NTSC_RATE = 315000000.00 / 88 * 4  # 315/88 Mhz rate * 4
+    FSC = (227.5 * 15750.0 * 1000.0 / 1001.0)
+    #FLINE = 15734
 
     def __init__(self, precise=False, random=None):
         self.precise = precise
@@ -334,6 +342,18 @@ class Ntsc:
 
         self._black_line_cut = False  # Add black line glitch (credits to @rgm89git)
         self._black_tape_line = False # Add black tape line under video
+
+        self._frame_changes = {}
+        self._line_error = 0
+        self._line_error_range = 6
+
+        self._signal_debug = False
+        self.fs = 0.0
+    
+    def init_settings(self, frame: numpy.ndarray):
+        ogw, ogh, channel = frame.shape
+
+        self.fs = (30000.0 / 1001.0) * float(525) * float(ogw) * (858.0 / 720.0)
 
     def rand(self) -> numpy.int32:
         return self.random.nextInt(_from=0)
@@ -487,14 +507,24 @@ class Ntsc:
     _Vmult = numpy.array([0, 1, 0, -1], dtype=numpy.int32)
 
     def _chroma_luma_xi(self, fieldno: int, y: int):
-        if self._video_scanline_phase_shift == 90:
-            return int(fieldno + self._video_scanline_phase_shift_offset + (y >> 1)) & 3
-        elif self._video_scanline_phase_shift == 180:
-            return int(((((fieldno + y) & 2) + self._video_scanline_phase_shift_offset) & 3))
-        elif self._video_scanline_phase_shift == 270:
-            return int(((fieldno + self._video_scanline_phase_shift_offset) & 3))
+        if (self._output_ntsc):
+            if self._video_scanline_phase_shift == 90:
+                return int(fieldno + self._video_scanline_phase_shift_offset + (y >> 1)) & 3
+            elif self._video_scanline_phase_shift == 180:
+                return int(((((fieldno + y) & 2) + self._video_scanline_phase_shift_offset) & 3))
+            elif self._video_scanline_phase_shift == 270:
+                return int(((fieldno + self._video_scanline_phase_shift_offset) & 3))
+            else:
+                return int(self._video_scanline_phase_shift_offset & 3)
         else:
-            return int(self._video_scanline_phase_shift_offset & 3)
+            return int((fieldno + y + self._video_scanline_phase_shift_offset) & 3)
+
+    def encode_composite_level(self, array: numpy.ndarray):
+        ar = array.astype(numpy.float32) / 32768.0
+        return ((0.6 * ar + 0.2) * 32768.0).astype(numpy.int32)
+    def decode_composite_level(self, array: numpy.ndarray):
+        ar = array.astype(numpy.float32) / 32768.0
+        return (((5.0 * ar - 1.0) / 3.0) * 32768.0).astype(numpy.int32)
 
     def chroma_into_luma(self, yiq: numpy.ndarray, field: int, fieldno: int, subcarrier_amplitude: int):
         _, height, width = yiq.shape
@@ -506,23 +536,54 @@ class Ntsc:
             Y = fY[y]
             I = fI[y]
             Q = fQ[y]
+
             xi = self._chroma_luma_xi(fieldno, y)
+            #if (field == 0):
+            #    start_phase = 0
+            #else:
+            #    start_phase = 1
+            
+            #phase = numpy.linspace(start=start_phase,stop=start_phase + len(Y) * 2.0 * (0.5 * numpy.pi * (2.0 * Ntsc.FSC * self.fs)),num=len(Y),endpoint=False) % (2.0 * numpy.pi)
 
             chroma = I * subcarrier_amplitude * umult[xi:xi + width]
             chroma += Q * subcarrier_amplitude * vmult[xi:xi + width]
-            Y[:] = Y + chroma.astype(numpy.int32) // 50
+            #chroma = numpy.sin(phase) * I + numpy.cos(phase) * Q
+
+            Y[:] = Y + (chroma.astype(numpy.int32) // 50)
+            #Y[:] = Y + (chroma.astype(numpy.int32))
+            #Y[:] = Y
             I[:] = 0
             Q[:] = 0
+
+            #Encode composite level
+            Y[:] = self.encode_composite_level(Y)
+
             y += 2
 
     def chroma_from_luma(self, yiq: numpy.ndarray, field: int, fieldno: int, subcarrier_amplitude: int):
         _, height, width = yiq.shape
         fY, fI, fQ = yiq
         chroma = numpy.zeros(width, dtype=numpy.int32)
+        
+        blackLine = numpy.zeros(width, dtype=numpy.int32)
+
         for y in range(field, height, 2):
             Y = fY[y]
             I = fI[y]
             Q = fQ[y]
+
+            prevLine = blackLine
+            if(y - 2 >= field):
+                prevLine = fY[y - 2]
+            currLine = Y
+            nextLine = blackLine
+            if(y + 2 < height):
+                nextLine = fY[y + 2]
+            
+            #Decode composite level
+            Y[:] = self.decode_composite_level(Y)
+            # ogY = numpy.array(Y,copy=True)
+
             sum: int = Y[0] + Y[1]
             y2 = numpy.pad(Y[2:], (0, 2))
             yd4 = numpy.pad(Y[:-2], (2, 0))
@@ -531,6 +592,8 @@ class Ntsc:
             acc = numpy.add.accumulate(sums0, dtype=numpy.int32)[1:]
             acc4 = acc // 4
             chroma = y2 - acc4
+            #for x in range(0,width):
+            #    Y[x] = sums0[x]
             Y[:] = acc4
 
             xi = self._chroma_luma_xi(fieldno, y)
@@ -542,6 +605,8 @@ class Ntsc:
 
             chroma = (chroma * 50 / subcarrier_amplitude)
 
+            #Y[:] = Y - chroma
+
             # decode the color right back out from the subcarrier we generated
             cxi = -chroma[xi::2]
             cxi1 = -chroma[xi + 1::2]
@@ -552,6 +617,9 @@ class Ntsc:
             Q[1:width - 2:2] = (Q[:width - 2:2] + Q[2::2]) >> 1
             I[width - 2:] = 0
             Q[width - 2:] = 0
+
+            umult = numpy.tile(Ntsc._Umult, int((width / 4) + 1))
+            vmult = numpy.tile(Ntsc._Vmult, int((width / 4) + 1))
 
     def vhs_luma_lowpass(self, yiq: numpy.ndarray, field: int, luma_cut: float):
         _, height, width = yiq.shape
@@ -658,9 +726,9 @@ class Ntsc:
         if self._vhs_edge_wave != 0:
             self.vhs_edge_wave(yiq, field)
 
-        self.vhs_luma_lowpass(yiq, field, vhs_speed.luma_cut)
+        self.vhs_luma_lowpass(yiq, field, int(vhs_speed.luma_cut * 2))
 
-        self.vhs_chroma_lowpass(yiq, field, vhs_speed.chroma_cut, vhs_speed.chroma_delay)
+        self.vhs_chroma_lowpass(yiq, field, int(vhs_speed.chroma_cut * 2), (vhs_speed.chroma_delay // 5))
 
         if self._vhs_chroma_vert_blend and self._output_ntsc:
             self.vhs_chroma_vert_blend(yiq, field)
@@ -672,6 +740,121 @@ class Ntsc:
             self.chroma_into_luma(yiq, field, fieldno, self._subcarrier_amplitude)
             self.chroma_from_luma(yiq, field, fieldno, self._subcarrier_amplitude)
 
+    def increase_bright(self, yiq: numpy.ndarray, field: int):
+        _, height, width = yiq.shape
+        fY, fI, fQ = yiq
+        y = field
+
+        #print("GET FIELD")
+        #print(fY.shape)
+        #print(fI.shape)
+        #print(fQ.shape)
+
+        #print(fY)
+        #fY = fY * (235 / 255) + 16
+        #fY = 128 * fY
+        fY = (fY * (235-16)/255 + 16).astype(numpy.int32)
+        fI = ((fI-128) * (240-16)/255 + 128).astype(numpy.int32)
+        fQ = ((fQ-128) * (240-16)/255 + 128).astype(numpy.int32)
+        #print(fY)
+        #print(fY[5][2])
+
+    def line_analog_scale(self, rgb: numpy.ndarray, reverse: bool = False, ogw: int = 0, ogh: int = 0):
+        h, w, _ = rgb.shape
+
+        #width_ratio = (w / (Ntsc.FSC / Ntsc.FLINE))
+        print(width_ratio)
+
+        if(reverse):
+            if((ogw != 0) and (ogh != 0)):
+                rgb = cv2.resize(rgb, (ogw, ogh), interpolation=cv2.INTER_LANCZOS4)
+        else:
+            rgb = cv2.resize(rgb, (round(w * width_ratio), h), interpolation=cv2.INTER_LANCZOS4)
+        
+        return rgb
+
+    def line_error(self, yiq: numpy.ndarray, field: int = 0):
+        _, height, width = yiq.shape
+        fY, fI, fQ = yiq
+
+        if self._frame_changes["line_error_enable"]:
+            stepY = self._frame_changes["line_error_position"]
+            stepY += field
+
+            y = field
+            while y < height:
+                if y >= stepY:
+                    fieldquant = self._frame_changes["line_error_range"]
+
+                    Y = fY[y]
+                    I = fI[y]
+                    Q = fQ[y]
+
+                    savedY = fY[stepY]
+                    savedI = fI[stepY]
+                    savedQ = fQ[stepY]
+
+                    if y <= (stepY+fieldquant):
+                        Y = fY[y]
+                        I = fI[y]
+                        Q = fQ[y]
+
+                        x = 0
+                        while x < width:
+                            Y[x] = savedY[x]
+                            I[x] = savedI[x]
+                            Q[x] = savedQ[x]
+                            x += 1
+                y += 2
+    
+    def render_frame(self, f1: numpy.ndarray, f2: numpy.ndarray, fieldno: int, moirepos: int):
+        if(self._line_error > 0):
+            line_error = (self.rand() % 100000 < (self._line_error * 2))
+        else:
+            line_error = False
+
+        self._frame_changes = {
+            "line_error_enable": line_error,
+            "line_error_range": random.choice(range(0, self._line_error_range, 2)),
+            "line_error_position": random.choice(range(0, f1.shape[0], 2))
+        }
+
+        if self._frame_changes["line_error_enable"]:
+            print(self._frame_changes["line_error_enable"])
+
+        self.init_settings(f1)
+
+        f1_i, signal1 = self.composite_layer(f1, f1, field=0, fieldno=fieldno, moirepos=moirepos)
+        f2_in = cv2.warpAffine(f2, numpy.float32([[1, 0, 0], [0, 1, 1]]), (f2.shape[1], f2.shape[0]+2))
+        f2_i, signal2 = self.composite_layer(f2_in, f2_in, field=2, fieldno=fieldno, moirepos=moirepos)
+        f1_out = cv2.convertScaleAbs(f1_i)
+        f2_out = cv2.convertScaleAbs(f2_i)
+
+        if(self._signal_debug):
+            fullsignal = numpy.array([],dtype=numpy.float32)
+
+            fullsignal = numpy.concatenate((fullsignal, signal1), axis=None)
+            fullsignal = numpy.concatenate((fullsignal, signal2), axis=None)
+
+        #output_path = Path(r"C:\Users\RGM\Documents\ForkProjects\ntscQT_Sandbox\Inputs\test_signal.wav")
+
+        #if(output_path.is_file()):
+        #    output_path.unlink()
+
+        #sf.write(r"C:\Users\RGM\Documents\ForkProjects\ntscQT_Sandbox\Inputs\test_signal.wav", fullsignal, 48000, subtype='PCM_24')
+
+        return f1_out, f2_out
+
+    def generate_signal(self, signal: numpy.ndarray, channel: numpy.ndarray, field: int = 0) -> numpy.ndarray:
+        y = field
+        height, width = channel.shape
+
+        while y < height:
+            signal = numpy.concatenate((signal, channel[y]), axis=None)
+            y += 2
+        
+        return signal
+    
     def composite_layer(self, dst: numpy.ndarray, src: numpy.ndarray, field: int, fieldno: int, moirepos: int):
         assert dst.shape == src.shape, "dst and src images must be of same shape"
         
@@ -680,7 +863,15 @@ class Ntsc:
         if self._black_line_cut:
             cut_black_line_border(src)
 
+        ogw, ogh, channel = src.shape
+
+        #src = self.line_analog_scale(src, reverse=False)
+        #print(src.shape)
+
         yiq = bgr2yiq(src)
+        print(yiq.shape)
+
+        #self.increase_bright(yiq, field)
 
         if self._color_bleed_before and (self._color_bleed_vert != 0 or self._color_bleed_horiz != 0):
             self.color_bleed(yiq, field)
@@ -691,9 +882,16 @@ class Ntsc:
         if self._ringing != 1.0:
             self.ringing(yiq, field)
 
+        if self._black_tape_line:
+            self.add_black_tape_line(yiq, field)
+
+        self.line_error(yiq, field)
+
         self.chroma_into_luma(yiq, field, fieldno, self._subcarrier_amplitude)
 
-        if self._composite_preemphasis != 0.0 and self._composite_preemphasis_cut > 0:
+        #print(self._composite_preemphasis)
+        #self._composite_preemphasis != 0.0 and
+        if self._composite_preemphasis_cut > 0:
             composite_preemphasis(yiq, field, self._composite_preemphasis, self._composite_preemphasis_cut)
 
         if self._video_noise != 0:
@@ -729,8 +927,8 @@ class Ntsc:
         if not self._color_bleed_before and (self._color_bleed_vert != 0 or self._color_bleed_horiz != 0):
             self.color_bleed(yiq, field)
 
-        # if self._ringing != 1.0:
-        #     self.ringing(yiq, field)
+        #if self._ringing != 1.0:
+        #    self.ringing(yiq, field)
 
         Y, I, Q = yiq
 
@@ -738,7 +936,22 @@ class Ntsc:
         I[field::2] = self._blur_chroma(I[field::2])
         Q[field::2] = self._blur_chroma(Q[field::2])
 
-        return yiq2bgr(yiq)
+        if(self._signal_debug):
+            fullfieldsignal = numpy.array([],dtype=Y.dtype)
+
+            fullfieldsignal = self.generate_signal(fullfieldsignal, Y, field)
+
+            fullfieldsignal = fullfieldsignal.astype(numpy.float32) / 32768.0
+        else:
+            fullfieldsignal = None
+
+        final = yiq2bgr(yiq)
+
+        #print(f"Good: {str(final.shape)}")
+
+        #final = self.line_analog_scale(final, reverse=True, ogh=ogh, ogw=ogw)
+
+        return final, fullfieldsignal
 
     def _blur_chroma(self, chroma: numpy.ndarray) -> numpy.ndarray:
         h, w = chroma.shape
@@ -789,6 +1002,8 @@ def random_ntsc(seed=None) -> Ntsc:
     ntsc._color_bleed_before = 1 == rnd.randint(0, 1)
     ntsc._color_bleed_horiz = int(rnd.triangular(0, 8, 0))
     ntsc._color_bleed_vert = int(rnd.triangular(0, 8, 0))
+    ntsc._line_error = int(rnd.triangular(0, 800, 10))
+    ntsc._line_error_range = int(rnd.triangular(0, 10, 0))
     return ntsc
 
 

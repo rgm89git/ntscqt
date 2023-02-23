@@ -1,3 +1,5 @@
+## NEW PLUS FORK MOVED TO NEW REPO: [HERE](https://github.com/rgm89git/ntscQTplus)
+
 # [<img src="https://github.com/JargeZ/ntscqt/blob/master/docs/img/ntscqt_banner.png?raw=true">](https://0hz.ru/ntscqt/)
 #### <p align="center">AKA `Line maker 10.0`</p>
 
